@@ -1,0 +1,5 @@
+certifi==2024.2.2
+fonttools==4.51.0
+pillow==10.3.0
+pytube==15.0.0
+tkinter==8.6.14
