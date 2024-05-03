@@ -15,20 +15,19 @@ Installation
 
 Clone the repository to your local machine:
 
-git clone https://github.com/ScryptSculptor/StreamSniper.git
-
-cd StreamSniper
+    git clone https://github.com/Arafaa199/StreamSniper.git
+    cd StreamSniper
 
 Install the necessary packages:
 
-pip install -r requirements.txt
+    pip install -r requirements.txt
 
 Running the Application
 
 To run StreamSniper, execute the following command in the project's root directory:
 
-
-python3 gui.py
+    python3 gui.py
+    
 How to Use
 Start the Application: Run the application using the command above.
 Enter the YouTube URL: Copy and paste the YouTube video URL into the URL field.
@@ -36,9 +35,10 @@ Choose the Download Format: Select whether you want to download the video or jus
 Set Download Location: Click on the 'Browse' button to choose a download location.
 Download: Click the 'Download' button to start the download process.
 
-Built with
+**Built with:**
 Python
-Libs used 
+
+**Libs used** 
 Tkinter
 Pytube 
 
@@ -54,4 +54,4 @@ License
 This project is licensed under the GNU License - see the LICENSE.md file for details.
 
 Author
-ScryptSculptor (Ahmed Arafa)
+ScryptSculptor
