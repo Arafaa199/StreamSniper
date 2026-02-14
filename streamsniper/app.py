@@ -1,13 +1,26 @@
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import ttk
 
 from . import __version__, theme
 from .config import Config, DownloadHistory
-from .downloader import DownloadManager, DownloadProgress
+from .downloader import DownloadManager, DownloadProgress, QueueItem
 from .tabs.download_tab import DownloadTab
 from .tabs.history_tab import HistoryTab
 from .tabs.settings_tab import SettingsTab
 from .widgets import GradientFrame
+
+
+def _notify_macos(title: str, message: str):
+    if sys.platform != "darwin":
+        return
+    script = f'display notification "{message}" with title "{title}"'
+    try:
+        subprocess.Popen(["osascript", "-e", script],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 class StreamSniperApp:
@@ -31,11 +44,9 @@ class StreamSniperApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
-        # Gradient background
         self.gradient = GradientFrame(self.root)
         self.gradient.place(relwidth=1, relheight=1)
 
-        # Notebook (tabs)
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
@@ -54,14 +65,22 @@ class StreamSniperApp:
             self.root.after(0, self.download_tab.on_progress, task_id, progress)
 
         def on_complete(task_id: str, filepath: str, meta: dict):
-            self.root.after(0, self.download_tab.on_complete, task_id, filepath, meta)
+            def _handle():
+                self.download_tab.on_complete(task_id, filepath, meta)
+                title = meta.get("title") or filepath.rsplit("/", 1)[-1]
+                _notify_macos("StreamSniper", f"Downloaded: {title}")
+            self.root.after(0, _handle)
 
         def on_error(task_id: str, error: str):
             self.root.after(0, self.download_tab.on_error, task_id, error)
 
+        def on_queue_update(items: list[QueueItem]):
+            self.root.after(0, self.download_tab.on_queue_update, items)
+
         self.dm.on_progress = on_progress
         self.dm.on_complete = on_complete
         self.dm.on_error = on_error
+        self.dm.on_queue_update = on_queue_update
 
     def _on_tab_change(self, event):
         idx = self.notebook.index(self.notebook.select())

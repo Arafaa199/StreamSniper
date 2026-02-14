@@ -23,6 +23,7 @@ DEFAULTS = {
     "quality": "best",
     "audio_format": "mp3",
     "embed_thumbnail": True,
+    "sponsorblock": False,
     "window_geometry": "900x620",
 }
 

@@ -1,3 +1,4 @@
+import os
 import queue
 import threading
 import uuid
@@ -42,6 +43,16 @@ class VideoInfo:
     formats: list = field(default_factory=list)
     is_playlist: bool = False
     playlist_count: int = 0
+    playlist_title: str = ""
+    entries: list = field(default_factory=list)
+
+
+@dataclass
+class PlaylistEntry:
+    url: str
+    title: str
+    duration: str = ""
+    index: int = 0
 
 
 def _format_duration(seconds: Optional[int]) -> str:
@@ -89,7 +100,7 @@ class Downloader:
         opts = {
             "quiet": True,
             "no_warnings": True,
-            "extract_flat": False,
+            "extract_flat": "in_playlist",
             "skip_download": True,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -99,7 +110,20 @@ class Downloader:
             raise ValueError("Could not extract video info")
 
         is_playlist = info.get("_type") == "playlist"
-        entries = info.get("entries", [])
+        raw_entries = list(info.get("entries", []))
+
+        entries = []
+        if is_playlist:
+            for i, e in enumerate(raw_entries):
+                if e is None:
+                    continue
+                entry_url = e.get("url") or e.get("webpage_url", "")
+                entries.append(PlaylistEntry(
+                    url=entry_url,
+                    title=e.get("title", f"Video {i + 1}"),
+                    duration=_format_duration(e.get("duration")),
+                    index=i + 1,
+                ))
 
         formats = []
         for f in info.get("formats", []):
@@ -118,12 +142,14 @@ class Downloader:
             uploader=info.get("uploader", info.get("channel", "Unknown")),
             formats=formats,
             is_playlist=is_playlist,
-            playlist_count=len(entries) if is_playlist else 0,
+            playlist_count=len(entries),
+            playlist_title=info.get("title", "") if is_playlist else "",
+            entries=entries,
         )
 
     def download(self, url: str, output_dir: str, fmt: str = "video",
                  quality: str = "best", audio_format: str = "mp3",
-                 embed_thumbnail: bool = True,
+                 embed_thumbnail: bool = True, sponsorblock: bool = False,
                  progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                  cancel_event: Optional[threading.Event] = None) -> Optional[str]:
         progress = DownloadProgress(state=DownloadState.EXTRACTING)
@@ -173,6 +199,15 @@ class Downloader:
             **format_opts,
         }
 
+        if sponsorblock:
+            opts.setdefault("postprocessors", []).append({
+                "key": "SponsorBlock",
+            })
+            opts.setdefault("postprocessors", []).append({
+                "key": "ModifyChapters",
+                "remove_sponsor_segments": ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview"],
+            })
+
         if embed_thumbnail and fmt == "audio":
             opts.setdefault("postprocessors", []).append({
                 "key": "EmbedThumbnail",
@@ -201,14 +236,24 @@ class Downloader:
 
 
 @dataclass
+class QueueItem:
+    task_id: str
+    url: str
+    title: str
+    state: DownloadState = DownloadState.QUEUED
+
+
+@dataclass
 class _Task:
     task_id: str
     url: str
+    title: str
     output_dir: str
     fmt: str
     quality: str
     audio_format: str
     embed_thumbnail: bool
+    sponsorblock: bool
 
 
 class DownloadManager:
@@ -217,28 +262,54 @@ class DownloadManager:
         self._downloader = Downloader()
         self._cancel_event = threading.Event()
         self._current_task: Optional[_Task] = None
+        self._pending: list[QueueItem] = []
+        self._lock = threading.Lock()
         self.on_progress: Optional[Callable[[str, DownloadProgress], None]] = None
         self.on_complete: Optional[Callable[[str, str, dict], None]] = None
         self.on_error: Optional[Callable[[str, str], None]] = None
+        self.on_queue_update: Optional[Callable[[list[QueueItem]], None]] = None
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
-    def enqueue(self, url: str, output_dir: str, fmt: str = "video",
-                quality: str = "best", audio_format: str = "mp3",
-                embed_thumbnail: bool = True) -> str:
+    def enqueue(self, url: str, output_dir: str, title: str = "",
+                fmt: str = "video", quality: str = "best",
+                audio_format: str = "mp3", embed_thumbnail: bool = True,
+                sponsorblock: bool = False) -> str:
         task_id = str(uuid.uuid4())[:8]
-        task = _Task(task_id, url, output_dir, fmt, quality, audio_format, embed_thumbnail)
+        task = _Task(task_id, url, title or url, output_dir, fmt, quality,
+                     audio_format, embed_thumbnail, sponsorblock)
+        item = QueueItem(task_id, url, title or url, DownloadState.QUEUED)
+        with self._lock:
+            self._pending.append(item)
         self._queue.put(task)
+        self._fire_queue_update()
         return task_id
 
     def cancel_current(self):
         self._cancel_event.set()
+
+    def queue_snapshot(self) -> list[QueueItem]:
+        with self._lock:
+            return list(self._pending)
+
+    def _fire_queue_update(self):
+        if self.on_queue_update:
+            self.on_queue_update(self.queue_snapshot())
+
+    def _set_item_state(self, task_id: str, state: DownloadState):
+        with self._lock:
+            for item in self._pending:
+                if item.task_id == task_id:
+                    item.state = state
+                    break
+        self._fire_queue_update()
 
     def _run(self):
         while True:
             task = self._queue.get()
             self._current_task = task
             self._cancel_event.clear()
+            self._set_item_state(task.task_id, DownloadState.DOWNLOADING)
 
             def progress_cb(p: DownloadProgress):
                 if self.on_progress:
@@ -252,11 +323,11 @@ class DownloadManager:
                     quality=task.quality,
                     audio_format=task.audio_format,
                     embed_thumbnail=task.embed_thumbnail,
+                    sponsorblock=task.sponsorblock,
                     progress_callback=progress_cb,
                     cancel_event=self._cancel_event,
                 )
                 if filepath and self.on_complete:
-                    import os
                     size_mb = 0.0
                     actual_path = filepath
                     if task.fmt == "audio":
@@ -267,13 +338,18 @@ class DownloadManager:
                                 break
                     if os.path.exists(actual_path):
                         size_mb = os.path.getsize(actual_path) / (1024 * 1024)
+                    self._set_item_state(task.task_id, DownloadState.COMPLETE)
                     self.on_complete(task.task_id, actual_path, {
                         "url": task.url,
+                        "title": task.title,
                         "format": task.fmt,
                         "quality": task.quality,
                         "filesize_mb": size_mb,
                     })
+                elif not filepath:
+                    self._set_item_state(task.task_id, DownloadState.CANCELLED)
             except Exception as e:
+                self._set_item_state(task.task_id, DownloadState.ERROR)
                 if self.on_error:
                     self.on_error(task.task_id, str(e))
             finally:

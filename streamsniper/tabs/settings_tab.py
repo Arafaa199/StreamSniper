@@ -70,12 +70,21 @@ class SettingsTab(ttk.Frame):
 
         # Embed thumbnail
         thumb_frame = ttk.Frame(container, style="TFrame")
-        thumb_frame.pack(fill=tk.X, pady=(0, 24))
+        thumb_frame.pack(fill=tk.X, pady=(0, 16))
 
         self.thumb_var = tk.BooleanVar(value=self.config.get("embed_thumbnail"))
         ttk.Checkbutton(thumb_frame, text="Embed thumbnail in audio files",
                         variable=self.thumb_var).pack(anchor=tk.W)
         self.thumb_var.trace_add("write", lambda *_: self.config.set("embed_thumbnail", self.thumb_var.get()))
+
+        # SponsorBlock
+        sb_frame = ttk.Frame(container, style="TFrame")
+        sb_frame.pack(fill=tk.X, pady=(0, 24))
+
+        self.sb_var = tk.BooleanVar(value=self.config.get("sponsorblock"))
+        ttk.Checkbutton(sb_frame, text="Enable SponsorBlock (skip sponsors, intros, outros)",
+                        variable=self.sb_var).pack(anchor=tk.W)
+        self.sb_var.trace_add("write", lambda *_: self.config.set("sponsorblock", self.sb_var.get()))
 
         # Reset
         ttk.Button(container, text="Reset to Defaults", style="Secondary.TButton",
@@ -93,3 +102,4 @@ class SettingsTab(ttk.Frame):
         self.quality_var.set(self.config.get("quality"))
         self.audio_var.set(self.config.get("audio_format"))
         self.thumb_var.set(self.config.get("embed_thumbnail"))
+        self.sb_var.set(self.config.get("sponsorblock"))
